@@ -1,0 +1,111 @@
+#!/bin/bash
+
+# Copyright (C) 2019 Ian Silvester <iansilvester@fastmail.fm>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see<https://www.gnu.org/licenses/>.
+
+# This script performs all the steps required to update the entire installed system to the very latest available Gentoo packages.
+# Root is required.
+
+function quit {
+	printf "\n\n\nTerminating emerge update on $(date) after %s\n\n" %1 |& tee -a ${LOG} 
+	exit 1
+}
+
+ROOT_UID=0   # Root has $UID 0.
+if [ "$UID" -ne "$ROOT_UID" ]
+then
+  echo "You are not root. Terminating execution."
+	exit 1
+fi
+
+LOG=/var/log/emerge-update.log
+
+printf "\n\n\nStarting full emerge update on $(date)\n\n" |& tee -a ${LOG} 
+read  -p "Press 'c' to run emaint or 's' to skip this step.." reply
+if [ "$reply" == "c" ]
+then
+	# Perform a complete upgrade of local package awareness (use emaint in place of emerge, per the man page for the latter)..
+	printf "RUNNING emaint -a sync TO UPDATE LOCAL PACKAGE REPOSITORY\n\n" |& tee -a ${LOG} 
+	#emerge --sync --quiet  <-- old command, replaced by the below
+	emaint -a sync |& tee -a ${LOG} 
+	printf "\n\n\nAny news items to read or does portage need a one-shot update?\n\n" |& tee -a ${LOG} 
+fi
+read  -p "Press 'c' to emerge update, 'q' to quit, or 's' to skip to next step.. " reply
+if [ "$reply" == "q" ]
+then
+	quit emaint
+elif [ "$reply" == "c" ]
+then
+	# ..then update installed packages based on that new awareness, also rebuilding anything based on USE changes
+	# I have made along the way, and don't stop if one package has unresolveable errors..
+	printf "\n\nRUNNING emerge --update --deep --changed-use --keep-going @world TO EMERGE ALL UPDATED PACKAGES\n\n" |& tee -a ${LOG} 
+	emerge --update --deep --changed-use --keep-going --verbose-conflicts @world |& tee -a ${LOG} 
+	# just in case there were some blocking packages, remind me how to debug that
+	printf "\n\nIf any blocking packages were encountered, try to emerge those that did the blocking to find out what requires them to stay as they are." |& tee -a ${LOG} 
+	printf "\nIf I can afford to do without the dependent package, unmerge that then retry to emerge the blocker.\n\n" |& tee -a ${LOG} 
+	printf "\nIf I get any packages listed as 'need to be rebuilt ... cannot be rebuilt because ... ebuild masked or unavailable'," |& tee -a ${LOG} 
+	printf "\n run equery d for the specific version listed to see which packages depend on that version, and try recompiling each of those" |& tee -a ${LOG} 
+	printf "\n so as to remove the dependency so emerge can drop that version (slot).\n\n" |& tee -a ${LOG} 
+	printf "\nIf the blocking package is part of a 'set' (e.g. kde or Qt), recompile all in that set, e.g.: emerge -vu \x24(qlist -IC|grep dev-qt|sort|uniq).\n\n" |& tee -a ${LOG} 
+	printf "\nIf the blocking package is too big (e.g. libreoffice), meaning it won't recompile for other dependency reasons," |& tee -a ${LOG} 
+	printf "\n unmerge (-c) it in order to allow the world update to complete, then remerge it afterwards.\n\n" |& tee -a ${LOG} 
+	printf "\nFor slot conflicts, it seems I have to individually compile all packages that want the 'old' version individually." |& tee -a ${LOG} 
+	printf "\n Using a similar qlist/grep approach as above to identify groups of packages can help with this." |& tee -a ${LOG} 
+	printf "\n Sometimes an obstinate such slot conflict will be solved by adding the dependent package to the emerge command line." |& tee -a ${LOG} 
+	printf "\n Sometimes an obstinate such slot conflict will be solved by re-emerging the package that has slot conflicts (esp. if the conflict is with 'no other package').\n\n" |& tee -a ${LOG} 
+	printf "If two packages block one another, sometimes it can be a USE flag incompatibility between them.\n\n" |& tee -a ${LOG} 
+	printf "For Python slot configs, a handy way to find any hard Python version dependencies is: grep -ri python_ /etc/portage/\n\n" |& tee -a ${LOG}
+	printf "For portage slot conflicts, it might be impossible to do it --oneshot and just have to go ahead with the normal full emerge.\n\n" |& tee -a ${LOG}
+fi
+read  -p "Press 'c' to emerge depclean, 'q' to quit, or 's' to skip to next step.. " reply
+if [ "$reply" == "q" ]
+then
+	quit update
+elif [ "$reply" == "c" ]
+then
+	# ..now remove any packages that have been orphaned in our new world..
+	printf "\n\nRUNNING emerge --verbose --depclean TO UNMERGE ANY ORPHANED PACAKGES\n\n" |& tee -a ${LOG} 
+	echo 
+	emerge --depclean |& tee -a ${LOG} 
+fi
+read  -p "Press 'c' to revdep-rebuild, 'q' to quit, or 's' to skip to next step.. " reply
+if [ "$reply" == "q" ]
+then
+	quit dep-clean
+elif [ "$reply" == "c" ]
+then
+	# ..and finally check whether the update has caused a package to be broken due to its
+	# dependencies being updated. The (default) FEATURE=preserve-libs is supposed to make
+	# this superfluous, so we run it with --pretend (and -i to delete temporary files)
+	# just as a double-check in case the FEATURE is buggy. Re-run it without -p to make
+	# it actually do anything
+	printf "\n\nRUNNING revdep-rebuild -ip TO DOUBLE-CHECK WHETHER ANY PACKAGES NEED A REBUILD DUE TO THEIR DEPENDENCIES BEING UPDATED\n\n" |& tee -a ${LOG} 
+	revdep-rebuild -ip |& tee -a ${LOG} 
+fi
+read  -p "Press 'c' to emerge preserved-rebuild or 'q' to quit... " reply
+if [ "$reply" == "q" ]
+then
+	quit revdep-rebuild
+elif [ "$reply" == "c" ]
+then
+	# This one is superstition, more or less. If a package install needs a lib to be upgraded, the older lib build is kept around
+	# for the benefit of other packages that have linked against it. In theory emerge will detect such situations and let us know
+	# that we could run the follow command, but at least once I found that said prompt only occurred after I ran revdep-rebuild,
+	# even though it returned no results
+	printf "\n\nRUNNING emerge @preserved-rebuild TO DOUBLE-CHECK WHETHER ANY INSTALLED PACKAGES ARE STILL USING OLDER VERSIONS OF THEIR DEPENDENCIES\n\n" |& tee -a ${LOG} 
+	emerge @preserved-rebuild |& tee -a ${LOG} 
+fi
+
+printf "\n\n\emerge update completed on $(date)\n\n" |& tee -a ${LOG} 
