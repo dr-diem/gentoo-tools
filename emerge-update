@@ -40,7 +40,7 @@ then
 	printf "RUNNING emaint -a sync TO UPDATE LOCAL PACKAGE REPOSITORY\n\n" |& tee -a ${LOG} 
 	#emerge --sync --quiet  <-- old command, replaced by the below
 	emaint -a sync |& tee -a ${LOG} 
-	printf "\n\n\nAny news items to read or does portage need a one-shot update?\n\n" |& tee -a ${LOG} 
+	printf "\n\n\nDid all the repos return the expected exit code? Any news items to read? Does portage need a one-shot update?\n\n" |& tee -a ${LOG} 
 fi
 read  -p "Press 'c' to emerge update, 'q' to quit, or 's' to skip to next step.. " reply
 if [ "$reply" == "q" ]
@@ -108,4 +108,4 @@ then
 	emerge @preserved-rebuild |& tee -a ${LOG} 
 fi
 
-printf "\n\n\emerge update completed on $(date)\n\n" |& tee -a ${LOG} 
+printf "\n\nemerge update completed on $(date)\n\nRemember to rebuild baloo's index if Plasma was updated." |& tee -a ${LOG} 
